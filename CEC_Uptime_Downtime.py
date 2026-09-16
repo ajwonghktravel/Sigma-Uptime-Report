@@ -40,13 +40,37 @@ print(f"Latest Downtime Report: {downtime[0]}")
 print(f"Latest Uptime Report: {uptime[0]}")
 charge_sessions = filename_handling(report_type="Charge Sessions")
 print(f"Latest Charge Sessions Report: {charge_sessions[0]}")
-sigma_downtime_df = pd.read_excel(downtime[0], sheet_name='Downtime Report', skiprows=1)
-print(sigma_downtime_df.head())
-sigma_uptime_df = pd.read_excel(uptime[0], sheet_name='Uptime Report', skiprows=1)
+def header_handling(file_path, sheet_name, expected_columns):
+    real_header_row = None
+    for i in range(10):  # Check the first 10 rows
+        df = pd.read_excel(file_path, sheet_name=sheet_name, header=i)
+        if all(col in df.columns for col in expected_columns):
+            real_header_row = i
+            break
+    if real_header_row is None:
+        raise ValueError(f"Could not find the correct header row in the {sheet_name}.")
+    return real_header_row
+downtime_header = header_handling(
+    file_path=downtime[0], 
+    sheet_name='Downtime Report', 
+    expected_columns=['charger_id', 'downtime_start_time']
+)
+sigma_downtime_df = pd.read_excel(downtime[0], sheet_name='Downtime Report', header=downtime_header)
+print(sigma_downtime_df.head())    
+uptime_header = header_handling(
+    file_path=uptime[0], 
+    sheet_name='Uptime Report', 
+    expected_columns=['charger_id', 'uptime_start_time']
+)
+sigma_uptime_df = pd.read_excel(uptime[0], sheet_name='Uptime Report', header=uptime_header)
 print(sigma_uptime_df.head())
-sigma_chargesessions = pd.read_excel(charge_sessions[0], skiprows=1)
+charge_sessions_header = header_handling(
+    file_path=charge_sessions[0], 
+    sheet_name='Charge Sessions Report', 
+    expected_columns=['charger_id', 'session_start_time']
+)
+sigma_chargesessions = pd.read_excel(charge_sessions[0], sheet_name='Charge Sessions Report', header=charge_sessions_header)
 print(sigma_chargesessions.head())
-
 if args.quarter:
     quarter = args.quarter
 else:
@@ -122,12 +146,14 @@ def sessions_report_chargedata(quarter=quarter):
     filtered_sessions['charger_hardware_error'] = filtered_sessions['session_errors'].str.contains(error_pattern, na=False)
     filtered_sessions['other_error'] = filtered_sessions['session_errors'].apply(lambda x: not pd.isna(x) and not any(error in x for error in charger_hardware_errorlist))
     filtered_sessions['charge_session_status'] = filtered_sessions.apply(lambda row: 'ChargerHardwareError' if row['charger_hardware_error'] else ('OtherError' if row['other_error'] else 'Successful'), axis=1)
+    chargerid_to_sn = filtered_sessions.groupby('charger_id')['charger_serial_number'].first().to_dict()
     session_summary = filtered_sessions.groupby('charger_id').agg(
         total_sessions=('charge_event_id', 'count'),
         total_failed_sessions=('charge_session_status', lambda x: (x == 'Not Successful').sum()),
         charger_hardware_failures=('session_errors', lambda val: val.isin(charger_hardware_errorlist).sum()),
         other_failures = ('session_errors', lambda val: val.apply(lambda x: x == 'OtherError' or x == ()).sum())
     ).reset_index()
+    session_summary['serial_number'] = session_summary['charger_id'].map(chargerid_to_sn)
     chars_to_strip = " ,0123456789"
     session_error_types = filtered_sessions.copy()
     session_error_types['session_errors'] = session_error_types['session_errors'].str.strip(chars_to_strip)
@@ -135,6 +161,7 @@ def sessions_report_chargedata(quarter=quarter):
         index=session_error_types['charger_id'], 
         columns=session_error_types['session_errors']
     ).reset_index()    
+    session_error_types['serial_number'] = session_error_types['charger_id'].map(chargerid_to_sn)
     session_error_types.to_csv(output_dir / f"session_error_types_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
     session_summary.to_csv(output_dir / f"session_summary_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
     print(session_summary)
