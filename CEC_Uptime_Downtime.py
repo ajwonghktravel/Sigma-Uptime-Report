@@ -5,12 +5,15 @@ import re
 from datetime import datetime
 from pathlib import Path
 import dateparser
-from dateutil import parser
 import numpy as np
 import pandas as pd
 data_folder = Path.cwd() / "data"
 output_dir = Path("reports") / datetime.now().strftime('%Y-%m-%d')
 output_dir.mkdir(parents=True, exist_ok=True)
+parser = argparse.ArgumentParser(description="Generate quarterly reports for CRM and Charge Data.")
+parser.add_argument("--report", choices=["CRM", "ChargeData", "Both"], default="Both", help="Specify which report to generate.")
+parser.add_argument("--quarter", type=int, choices=[1, 2, 3, 4], help="Specify the quarter (1-4) for the report.")
+args = parser.parse_args()
 def filename_handling(report_type = None):
     # Get the current working directory
     cwd = data_folder
@@ -44,7 +47,18 @@ print(sigma_uptime_df.head())
 sigma_chargesessions = pd.read_excel(charge_sessions[0], skiprows=1)
 print(sigma_chargesessions.head())
 
-quarter = pd.Timestamp(2026, 4, 1).quarter
+if args.quarter:
+    quarter = args.quarter
+else:
+    current_month = datetime.now().month
+    if current_month in [1, 2, 3]:
+        quarter = 1
+    elif current_month in [4, 5, 6]:
+        quarter = 2
+    elif current_month in [7, 8, 9]:
+        quarter = 3
+    else:
+        quarter = 4
 if quarter == 1:
     # Do something
     quarter_start = datetime(datetime.now().year, 1, 1, 0, 0 , 0)
@@ -58,7 +72,7 @@ elif quarter == 3:
 else:
     quarter_start = datetime(datetime.now().year, 10, 1, 0, 0 , 0)
     quarter_end = datetime(datetime.now().year, 12, 31, 11, 59, 59)
-def quarterly_report_CRM():
+def quarterly_report_CRM(quarter=quarter):
     filtered_downtime = sigma_downtime_df[(sigma_downtime_df['calendar_quarter'] == f"Q{quarter}")]
     filtered_downtime['downtime_start_time'] = pd.to_datetime(filtered_downtime['downtime_start_time'], errors='coerce')
     filtered_downtime['downtime_end_time'] = pd.to_datetime(filtered_downtime['downtime_end_time'], errors='coerce')
@@ -98,7 +112,7 @@ def quarterly_report_CRM():
     #print(less_than_97)
     print(quarter_total_sums)
     print(sorted_by_reason)
-def sessions_report_chargedata():
+def sessions_report_chargedata(quarter=quarter):
     filtered_sessions = sigma_chargesessions[(sigma_chargesessions['calendar_quarter'] == f"Q{quarter}")]
     filtered_sessions['session_start_time'] = pd.to_datetime(filtered_sessions['session_start_time'], errors='coerce')
     filtered_sessions['session_end_time'] = pd.to_datetime(filtered_sessions['session_end_time'], errors='coerce')
@@ -124,6 +138,14 @@ def sessions_report_chargedata():
     session_error_types.to_csv(output_dir / f"session_error_types_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
     session_summary.to_csv(output_dir / f"session_summary_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
     print(session_summary)
+
+
 if __name__ == "__main__":
-    quarterly_report_CRM()
-    sessions_report_chargedata()
+    args = parser.parse_args()
+    if args.report == "CRM":
+        quarterly_report_CRM(quarter=args.quarter)
+    elif args.report == "ChargeData":
+        sessions_report_chargedata(quarter=args.quarter)
+    elif args.report == "Both":
+        quarterly_report_CRM(quarter=args.quarter)
+        sessions_report_chargedata(quarter=args.quarter)
