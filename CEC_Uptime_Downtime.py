@@ -138,6 +138,7 @@ def quarterly_report_CRM(quarter=quarter):
     print(sorted_by_reason)
 def sessions_report_chargedata(quarter=quarter):
     filtered_sessions = sigma_chargesessions[(sigma_chargesessions['calendar_quarter'] == f"Q{quarter}")]
+    #print(filtered_sessions['charge_session_status'].unique())
     filtered_sessions['session_start_time'] = pd.to_datetime(filtered_sessions['session_start_time'], errors='coerce')
     filtered_sessions['session_end_time'] = pd.to_datetime(filtered_sessions['session_end_time'], errors='coerce')
     filtered_sessions['session_duration_seconds'] = (filtered_sessions['session_end_time'] - filtered_sessions['session_start_time']).dt.total_seconds()
@@ -147,9 +148,11 @@ def sessions_report_chargedata(quarter=quarter):
     filtered_sessions['other_error'] = filtered_sessions['session_errors'].apply(lambda x: not pd.isna(x) and not any(error in x for error in charger_hardware_errorlist))
     filtered_sessions['charge_session_status'] = filtered_sessions.apply(lambda row: 'ChargerHardwareError' if row['charger_hardware_error'] else ('OtherError' if row['other_error'] else 'Successful'), axis=1)
     chargerid_to_sn = filtered_sessions.groupby('charger_id')['charger_serial_number'].first().to_dict()
+    #print(filtered_sessions['charge_session_status'].unique())
     session_summary = filtered_sessions.groupby('charger_id').agg(
         total_sessions=('charge_event_id', 'count'),
-        total_failed_sessions=('charge_session_status', lambda x: (x == 'Not Successful').sum()),
+        # total failed sessions is either hardware or other)
+        total_failed_sessions=('charge_session_status', lambda x: x.isin(['ChargerHardwareError', 'OtherError']).sum()),
         charger_hardware_failures=('session_errors', lambda val: val.isin(charger_hardware_errorlist).sum()),
         other_failures = ('session_errors', lambda val: val.apply(lambda x: x == 'OtherError' or x == ()).sum())
     ).reset_index()
