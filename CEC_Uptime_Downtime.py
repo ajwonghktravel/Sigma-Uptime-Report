@@ -56,21 +56,21 @@ downtime_header = header_handling(
     expected_columns=['charger_id', 'downtime_start_time']
 )
 sigma_downtime_df = pd.read_excel(downtime[0], sheet_name='Downtime Report', header=downtime_header)
-print(sigma_downtime_df.head())    
+#print(sigma_downtime_df.head())    
 uptime_header = header_handling(
     file_path=uptime[0], 
     sheet_name='Uptime Report', 
     expected_columns=['charger_id', 'uptime_start_time']
 )
 sigma_uptime_df = pd.read_excel(uptime[0], sheet_name='Uptime Report', header=uptime_header)
-print(sigma_uptime_df.head())
+#print(sigma_uptime_df.head())
 charge_sessions_header = header_handling(
     file_path=charge_sessions[0], 
     sheet_name='Charge Sessions Report', 
     expected_columns=['charger_id', 'session_start_time']
 )
 sigma_chargesessions = pd.read_excel(charge_sessions[0], sheet_name='Charge Sessions Report', header=charge_sessions_header)
-print(sigma_chargesessions.head())
+#print(sigma_chargesessions.head())
 if args.quarter:
     quarter = args.quarter
 else:
@@ -120,9 +120,11 @@ def quarterly_report_CRM(quarter=quarter):
     quarter_total_sums['mean_downtime'] = filtered_downtime.groupby('charger_id')['downtime_seconds'].mean()
     quarter_total_sums['minimum_downtime_duration'] = filtered_downtime.groupby('charger_id')['downtime_seconds'].min()
     quarter_total_sums['maximum_downtime_duration'] = filtered_downtime.groupby('charger_id')['downtime_seconds'].max()
+    # no significance, just adding to an object in order encountered.
     quarter_total_sums['downtime_causes'] = filtered_downtime.groupby('charger_id')['Downtime Types'].unique().astype(object).apply(lambda x: ", ".join(x))
     less_than_97 = quarter_total_sums[quarter_total_sums['uptime_percentage'] < 97].reset_index()
     sorted_by_reason = filtered_downtime.groupby(['charger_id', 'Downtime Exclusion Types'])['downtime_seconds'].sum()
+    print(sorted_by_reason.head())
     quarter_total_sums = quarter_total_sums.merge(sorted_by_reason, on='charger_id', how='left')
     quarter_total_sums = quarter_total_sums.rename(columns={'downtime_seconds': 'excluded_downtime_seconds'}).fillna(0)
     quarter_total_sums['excluded_downtime_reasons'] = (
@@ -138,6 +140,9 @@ def quarterly_report_CRM(quarter=quarter):
     print(sorted_by_reason)
 def sessions_report_chargedata(quarter=quarter):
     filtered_sessions = sigma_chargesessions[(sigma_chargesessions['calendar_quarter'] == f"Q{quarter}")]
+    print(filtered_sessions['charge_session_status'].unique())
+    unsuccessful_sessions = filtered_sessions['charge_session_status'].str.strip() == "Not Successful"
+    print(unsuccessful_sessions)
     #print(filtered_sessions['charge_session_status'].unique())
     filtered_sessions['session_start_time'] = pd.to_datetime(filtered_sessions['session_start_time'], errors='coerce')
     filtered_sessions['session_end_time'] = pd.to_datetime(filtered_sessions['session_end_time'], errors='coerce')
@@ -145,17 +150,23 @@ def sessions_report_chargedata(quarter=quarter):
     charger_hardware_errorlist = ['OverCurrentFailure', 'GroundFailure', 'PowerSwitchFailure', 'UnderVoltage']
     error_pattern = '|'.join(charger_hardware_errorlist)
     filtered_sessions['charger_hardware_error'] = filtered_sessions['session_errors'].str.contains(error_pattern, na=False)
-    filtered_sessions['other_error'] = filtered_sessions['session_errors'].apply(lambda x: not pd.isna(x) and not any(error in x for error in charger_hardware_errorlist))
-    filtered_sessions['charge_session_status'] = filtered_sessions.apply(lambda row: 'ChargerHardwareError' if row['charger_hardware_error'] else ('OtherError' if row['other_error'] else 'Successful'), axis=1)
-    chargerid_to_sn = filtered_sessions.groupby('charger_id')['charger_serial_number'].first().to_dict()
-    #print(filtered_sessions['charge_session_status'].unique())
+    filtered_sessions['other_error'] = (
+        (filtered_sessions['session_errors'].notna() | unsuccessful_sessions)
+        & ~filtered_sessions['charger_hardware_error']
+    )
+    failed_mask = (
+        filtered_sessions['charger_hardware_error']
+        | filtered_sessions['other_error']
+        | unsuccessful_sessions
+    )
+    filtered_sessions['is_failed'] = failed_mask
     session_summary = filtered_sessions.groupby('charger_id').agg(
         total_sessions=('charge_event_id', 'count'),
-        # total failed sessions is either hardware or other)
-        total_failed_sessions=('charge_session_status', lambda x: x.isin(['ChargerHardwareError', 'OtherError']).sum()),
-        charger_hardware_failures=('session_errors', lambda val: val.isin(charger_hardware_errorlist).sum()),
-        other_failures = ('session_errors', lambda val: val.apply(lambda x: x == 'OtherError' or x == ()).sum())
+        total_failed_sessions=('is_failed', 'sum'),
+        charger_hardware_failures=('charger_hardware_error', 'sum'),
+        other_failures=('other_error', 'sum'),
     ).reset_index()
+    chargerid_to_sn = filtered_sessions.groupby('charger_id')['charger_serial_number'].first().to_dict()
     session_summary['serial_number'] = session_summary['charger_id'].map(chargerid_to_sn)
     chars_to_strip = " ,0123456789"
     session_error_types = filtered_sessions.copy()
@@ -165,8 +176,8 @@ def sessions_report_chargedata(quarter=quarter):
         columns=session_error_types['session_errors']
     ).reset_index()    
     session_error_types['serial_number'] = session_error_types['charger_id'].map(chargerid_to_sn)
-    session_error_types.to_csv(output_dir / f"session_error_types_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
-    session_summary.to_csv(output_dir / f"session_summary_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
+    session_error_types.to_csv(output_dir / f"session_error_types_{quarter}_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
+    session_summary.to_csv(output_dir / f"session_summary_{quarter}_{datetime.now().strftime('%Y%m%d%H%M')}.csv", index=False)
     print(session_summary)
 
 
